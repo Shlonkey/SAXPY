@@ -84,27 +84,27 @@ struct program_run_infomation default_program_run_information()
     return default_run_info;
 }
 
-void process_input_flag(char flag, char* assignment, struct program_run_infomation program_info)
+void process_input_flag(char flag, char* assignment, struct program_run_infomation* program_info)
 {
     switch(flag)
     {
         case 'a':
-            if(strcmp(assignment, "S") == 0){program_info.type_of_array=SHORT;}
-            else if(strcmp(assignment, "I") == 0){program_info.type_of_array=INT;}
-            else if(strcmp(assignment, "L") == 0){program_info.type_of_array=LONG;}
-            else if(strcmp(assignment, "LL") == 0){program_info.type_of_array=LONGLONG;}
-            else if(strcmp(assignment, "F") == 0){program_info.type_of_array=FLOAT;}
-            else if(strcmp(assignment, "D") == 0){program_info.type_of_array=DOUBLE;}
-            else if(strcmp(assignment, "LD") == 0){program_info.type_of_array=LONGDOUBLE;}
+            if(strcmp(assignment, "S") == 0){program_info->type_of_array=SHORT;}
+            else if(strcmp(assignment, "I") == 0){program_info->type_of_array=INT;}
+            else if(strcmp(assignment, "L") == 0){program_info->type_of_array=LONG;}
+            else if(strcmp(assignment, "LL") == 0){program_info->type_of_array=LONGLONG;}
+            else if(strcmp(assignment, "F") == 0){program_info->type_of_array=FLOAT;}
+            else if(strcmp(assignment, "D") == 0){program_info->type_of_array=DOUBLE;}
+            else if(strcmp(assignment, "LD") == 0){program_info->type_of_array=LONGDOUBLE;}
             break;
         case 'm':
-            program_info.mem_usage_fraction = atof(assignment);
+            program_info->mem_usage_fraction = atof(assignment);
             break;
         case 'p':
-            program_info.profile = MAX(atoi(assignment), 0);
+            program_info->profile = MAX(atoi(assignment), 0);
             break;
         case 's':
-            program_info.oversubscription = MAX(atoi(assignment), 0);
+            program_info->oversubscription = MAX(atoi(assignment), 0);
             break;
     }
 
@@ -123,15 +123,11 @@ int main(int argc, char* argv[])
     for(int i = 1; i < argc; i++)
     {
         if(argv[i][0] == '-'){
-            process_input_flag(argv[i][1], argv[i+1], run_info);
-            printf("%c %s", argv[i][0], argv[i+1]);
+            process_input_flag(argv[i][1], argv[i+1], &run_info);
+            printf("%c %s ", argv[i][1], argv[i+1]);
             i++;
         }
     }
-
-    printf("Type : %i\nMemFrac : %lf\nProfile : %u\n Oversubscrition : %u", run_info.type_of_array, run_info.mem_usage_fraction, run_info.profile, run_info.oversubscription);
-
-    return 10;
     
     long long size_of_array_to_add = 1000000000;
 
