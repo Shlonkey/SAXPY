@@ -124,6 +124,7 @@ int main(int argc, char* argv[])
     {
         if(argv[i][0] == '-'){
             process_input_flag(argv[i][1], argv[i+1], run_info);
+            printf("%s %s", argv[i][0], argv[i+1]);
             i++;
         }
     }
