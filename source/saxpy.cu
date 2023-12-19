@@ -22,6 +22,10 @@
         }                                                                             \
     } while (0)
 
+#define CHECK_NOT_NEG(call) if(call < 0){fprintf(stderr, "*********Error: %llu, File: %s, Line: %d *********n",call, __FILE__, __LINE__);exit(1);}
+
+#define CALC_TIME(start_time, end_time) ((double)((end_time) - (start_time)) / CLOCKS_PER_SEC)
+
 __global__ void SAXPY(long long* d_a, long long* d_b, int k, long long array_length)
 {
     long long start_index = blockIdx.x * blockDim.x + threadIdx.x;
@@ -110,10 +114,33 @@ void process_input_flag(char flag, char* assignment, struct program_run_infomati
 
 }
 
+size_t arrayTypeToBytes(enum arraytype type)
+{
+    switch(type)
+    {
+        case 0:
+            return sizeof(short);
+        case 1:
+            return sizeof(int);
+        case 2:
+            return sizeof(long);
+        case 3:
+            return sizeof(long long);
+        case 4:
+            return sizeof(float);
+        case 5:
+            return sizeof(double);
+        case 6:
+            return sizeof(long double);
+    }
+    fprintf(stderr, "*********Error: %i, File: %s, Line: %d *********n",-1, __FILE__, __LINE__);
+    exit(-1);
+}
+
 //argv can contain the following;
 //  arraytype -a : {S, I, L, LL, F, D, LD}
 //  memuseagefration -m : 0.0 - 1.0
-//  profile -p : (0-UNINTMAX)
+//  profile -p : (0-UNINTMAX) --- should run through p times and calclate sd dev mean and such
 //  oversubscription -s: (0-INTMAX)
 int main(int argc, char* argv[])
 {
@@ -124,14 +151,27 @@ int main(int argc, char* argv[])
     {
         if(argv[i][0] == '-'){
             process_input_flag(argv[i][1], argv[i+1], &run_info);
-            printf("%c %s ", argv[i][1], argv[i+1]);
             i++;
         }
     }
-    
-    long long size_of_array_to_add = 1000000000;
 
-    clock_t full_time_start, full_time_end, gpu_only_time_start, gpu_only_time_end, mem_cpy_start, mem_cpy_end;
+    size_t size_of_list_element_bytes = arrayTypeToBytes(run_info.type_of_array); 
+
+    cudaDeviceProp device_properties;
+    cudaGetDeviceProperties(&device_properties, 0);
+
+    int global_mem_on_gpu_bytes = device_properties.totalGlobalMem;
+    int size_of_array_to_add = global_mem_on_gpu_bytes * run_info.mem_usage_fraction / size_of_list_element_bytes; 
+
+    int number_of_sms = device_properties.multiProcessorCount;
+    int number_of_fpus_per_sm = FPUsPerSM(device_properties);
+
+    int max_threads_per_sm = device_properties.maxThreadsPerMultiProcessor;
+    int max_threads_per_block = device_properties.maxThreadsPerBlock;
+    int number_of_blocks = number_of_sms * max_threads_per_sm / max_threads_per_block;
+
+    int number_of_threads_requested = (1 + run_info.oversubscription) * number_of_fpus_per_sm;
+    int number_of_threads_per_block = MIN(max_threads_per_block, number_of_threads_requested);
 
     #ifndef OPTIMIZATION_O3
     printf("Allocating Host Memory\n");
@@ -147,38 +187,39 @@ int main(int argc, char* argv[])
 
     #ifndef OPTIMIZATION_O3
     printf("Assigning Host Memory\n\n");
-    for (long long i = 0; i < size_of_array_to_add; i++)
-    {
-        if (i % 50000000 == 0)
-        {
-            printf("%lf %% complete\n", 100 * i / (double)size_of_array_to_add);
-        }
-        a[i] = i;
-        b[i] = i;
-    }
     #endif
-
-    cudaDeviceProp device_properties;
-    cudaGetDeviceProperties(&device_properties, 0);
-
-    int oversubscription_factor = 100;
-
-    int number_of_sms = device_properties.multiProcessorCount;
-    int number_of_fpus_per_sm = FPUsPerSM(device_properties);
-
-
-    int max_threads_per_sm = device_properties.maxThreadsPerMultiProcessor;
-    int max_threads_per_block = device_properties.maxThreadsPerBlock;
-    int number_of_blocks = number_of_sms * max_threads_per_sm / max_threads_per_block;
-
-    int number_of_threads_requested = (1 + oversubscription_factor) * number_of_fpus_per_sm;
-    int number_of_threads_per_block = MIN(max_threads_per_block, number_of_threads_requested);
+    if(run_info.type_of_array >= 0 && run_info.type_of_array <= 3)//integer type
+    {
+        for (unsigned long long i = 0; i < size_of_array_to_add; i++)
+        {
+            #ifndef OPTIMIZATION_O3
+            if (i % 50000000 == 0)
+            {
+                printf("%lf %% complete\n", 100 * i / (double)size_of_array_to_add);
+            }
+            #endif
+            a[i] = i;
+            b[i] = i;
+        }
+    }
+    else if (run_info.type_of_array >= 4 && run_info.type_of_array <= 6)//float type
+    {
+        for (unsigned long long i = 0; i < size_of_array_to_add; i++)
+        {
+            #ifndef OPTIMIZATION_O3
+            if (i % 50000000 == 0)
+            {
+                printf("%lf %% complete\n", 100 * i / (double)size_of_array_to_add);
+            }
+            #endif
+            a[i] = i / 2.0;
+            b[i] = i / 2.0;
+        }
+    }
 
     #ifndef OPTIMIZATION_O3
     printf("\nArray Size : %1.4lf * 10^9\nBlocks : %i\nThreads Per Block : %i\n\n",size_of_array_to_add / (double)1000000000, number_of_blocks, number_of_threads_per_block);
     #endif
-
-    full_time_start = clock();
 
     //define device pointers
     long long* d_a;
@@ -194,19 +235,11 @@ int main(int argc, char* argv[])
 
     #ifndef OPTIMIZATION_O3
     printf("copying %lf GB from Host to Device\n", sizeof(long long) * 2 * size_of_array_to_add / double(1024 * 1024 * 1024));
-    mem_cpy_start = clock();
     #endif
 
     //cpy hist data to device
     CUDA_CHECK(cudaMemcpy(d_a, a, sizeof(long long) * size_of_array_to_add, cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(d_b, b, sizeof(long long) * size_of_array_to_add, cudaMemcpyHostToDevice));
-
-    #ifndef OPTIMIZATION_O3
-    mem_cpy_end = clock();
-    printf("%lf GB H->D Mem Cpy took %lf seconds\n\n", sizeof(long long) * 2 * size_of_array_to_add / double(1024 * 1024 * 1024), (double)(mem_cpy_end - mem_cpy_start) / CLOCKS_PER_SEC);
-    #endif
-
-    gpu_only_time_start = clock();
 
     #ifndef OPTIMIZATION_O3
     printf("Launching Kernel\n");
@@ -217,44 +250,51 @@ int main(int argc, char* argv[])
 
     //not strictly needed as 'cudamemcpy' runs on the default stream as does 'Kernel' and hence it waits by default however if another stream was used, it would be mandatory
     CUDA_CHECK(cudaDeviceSynchronize());
-
-    gpu_only_time_end = clock();
     
     #ifndef OPTIMIZATION_O3
     printf("Kernel Complete\n\n");
     printf("copying %lf GB from Device to Host\n", sizeof(long long) * size_of_array_to_add / double(1024 * 1024 * 1024));
-    mem_cpy_start = clock();
     #endif
 
     //read back data
     CUDA_CHECK(cudaMemcpy(c, d_a, sizeof(long long) * size_of_array_to_add, cudaMemcpyDeviceToHost));
 
     #ifndef OPTIMIZATION_O3
-    mem_cpy_end = clock();
-    printf("%lf GB D->H Mem Cpy took %lf seconds\n", sizeof(long long) * size_of_array_to_add / double(1024 * 1024 * 1024), (double)(mem_cpy_end - mem_cpy_start) / CLOCKS_PER_SEC);
     printf("Freeing Data from Device\n\n");
     #endif
 
     CUDA_CHECK(cudaFree(d_a));
     CUDA_CHECK(cudaFree(d_b));
-
-    full_time_end = clock();
-
     CUDA_CHECK(cudaDeviceReset());
 
     #ifndef OPTIMIZATION_O3
     printf("VALIDATING RESULT\n");
-    for (long long i = 0; i < size_of_array_to_add; i++)
+    if(run_info.type_of_array >= 0 && run_info.type_of_array <= 3)//integer type
     {
-        if (c[i] != (long long)(k + 1) * i)
+        for (long long i = 0; i < size_of_array_to_add; i++)
         {
-            printf("%lli != %lli\n", c[i], (long long)(k + 1) * i);
-            printf("RESULT INVALID\n\n");
-            return -1;
+            if (c[i] != (long long)(k + 1) * i)
+            {
+                printf("%lli != %lli\n", c[i], (long long)(k + 1) * i);
+                printf("RESULT INVALID\n\n");
+                return -1;
+            }
         }
     }
-    printf("RESULT VALID\n\n");
+    else if (run_info.type_of_array >= 4 && run_info.type_of_array <= 6)//float type
+    {
+        for (long long i = 0; i < size_of_array_to_add; i++)
+        {
+            if (c[i] != (long long)(k + 1) * i)
+            {
+                printf("%lli != %lli\n", c[i], (long long)(k + 1) * i / 2);
+                printf("RESULT INVALID\n\n");
+                return -1;
+            }
+        }
+    }
 
+    printf("RESULT VALID\n\n");
     printf("Freeing Data from Host\n\n");
     #endif
 
@@ -262,17 +302,15 @@ int main(int argc, char* argv[])
     free(b);
     free(c);
 
-    double cpu_gpu_time = (double)(full_time_end - full_time_start) / CLOCKS_PER_SEC;
-    double gpu_time = (double)(gpu_only_time_end - gpu_only_time_start) / CLOCKS_PER_SEC;
-    double cpu_time = cpu_gpu_time - gpu_time;
-    
-    printf("CPU-GPU including cudaMalloc, cudaMemcpy and kernel : %lf\nGPU including kernel : %lf\nCPU including cudaMalloc and cudaMemcpy : %lf\nPercentage of time on Computation vs IO : %lf%%\n", cpu_gpu_time, gpu_time, cpu_time, gpu_time * 100 / cpu_time);
-
-    int number_of_active_threads_per_sm = MIN(number_of_fpus_per_sm, number_of_threads_requested);
-    double percentage_of_fpus_used = 100 * number_of_active_threads_per_sm / (double)number_of_fpus_per_sm;
-    double percentage_of_inactive_threads_used = 100 * (number_of_threads_per_block - number_of_active_threads_per_sm) / (double)(max_threads_per_block - number_of_active_threads_per_sm);
-    
-    printf("Number of Active Threads per SM : %i\nNumber of Active and Inactive Threads per SM : %i\nPercentage of FPUs used : %lf%%\nPercentage of Inactive Threads Used : %lf%%\nActive to Inactive Thread Ratio : (%i:%i)\n--------------------------------------------------------------------------------\n", number_of_active_threads_per_sm, number_of_threads_per_block, percentage_of_fpus_used, percentage_of_inactive_threads_used, number_of_active_threads_per_sm, (number_of_threads_per_block - number_of_active_threads_per_sm));
-
+    if(run_info.profile > 0)
+    {
+        //print run metrics
+        printf("");
+        int number_of_active_threads_per_sm = MIN(number_of_fpus_per_sm, number_of_threads_requested);
+        double percentage_of_fpus_used = 100 * number_of_active_threads_per_sm / (double)number_of_fpus_per_sm;
+        double percentage_of_inactive_threads_used = 100 * (number_of_threads_per_block - number_of_active_threads_per_sm) / (double)(max_threads_per_block - number_of_active_threads_per_sm);
+        
+        printf("Number of Active Threads per SM : %i\nNumber of Active and Inactive Threads per SM : %i\nPercentage of FPUs used : %lf%%\nPercentage of Inactive Threads Used : %lf%%\nActive to Inactive Thread Ratio : (%i:%i)\n--------------------------------------------------------------------------------\n", number_of_active_threads_per_sm, number_of_threads_per_block, percentage_of_fpus_used, percentage_of_inactive_threads_used, number_of_active_threads_per_sm, (number_of_threads_per_block - number_of_active_threads_per_sm));
+    }
     return 0;
 }
