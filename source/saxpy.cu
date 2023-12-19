@@ -183,7 +183,7 @@ int main(int argc, char* argv[])
     long long* c = (long long*)malloc(sizeof(long long) * size_of_array_to_add);
     int k = 2;
 
-    if (a == NULL || b == NULL || c == NULL) return -1;
+    if (a == NULL || b == NULL || c == NULL){return -1;}
 
     #ifndef OPTIMIZATION_O3
     printf("Assigning Host Memory\n\n");
