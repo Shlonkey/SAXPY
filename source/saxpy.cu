@@ -25,6 +25,23 @@
 #define CHECK_NOT_NEG(call) if(call < 0){fprintf(stderr, "*********Error: %llu, File: %s, Line: %d *********n",call, __FILE__, __LINE__);exit(1);}
 #define CALC_TIME(start_time, end_time) ((double)((end_time) - (start_time)) / CLOCKS_PER_SEC)
 
+#ifdef SHORT
+    #define VARIABLE_TYPE short
+#elif INT
+    #define VARIABLE_TYPE int
+#elif LONG
+    #define VARIABLE_TYPE long
+#elif LONGLONG
+    #define VARIABLE_TYPE long long
+#elif FLOAT
+    #define VARIABLE_TYPE float
+#elif DOUBLE
+    #define VARIABLE_TYPE double
+#elif LONGDOUBLE
+    #define VARIABLE_TYPE long double
+#endif
+
+
 __global__ void SAXPY(long long* d_a, long long* d_b, int k, long long array_length)
 {
     long long start_index = blockIdx.x * blockDim.x + threadIdx.x;
@@ -75,7 +92,6 @@ enum arraytype
 
 struct program_run_infomation
 {
-    enum arraytype type_of_array;
     double mem_usage_fraction;
     unsigned int profile;
     unsigned int oversubscription;
@@ -83,7 +99,7 @@ struct program_run_infomation
 
 struct program_run_infomation default_program_run_information()
 {
-    struct program_run_infomation default_run_info = {INT, 0.9, 0, 0};
+    struct program_run_infomation default_run_info = {0.9, 0, 0};
     return default_run_info;
 }
 
@@ -91,15 +107,6 @@ void process_input_flag(char flag, char* assignment, struct program_run_infomati
 {
     switch(flag)
     {
-        case 'a':
-            if(strcmp(assignment, "S") == 0){program_info->type_of_array=SHORT;}
-            else if(strcmp(assignment, "I") == 0){program_info->type_of_array=INT;}
-            else if(strcmp(assignment, "L") == 0){program_info->type_of_array=LONG;}
-            else if(strcmp(assignment, "LL") == 0){program_info->type_of_array=LONGLONG;}
-            else if(strcmp(assignment, "F") == 0){program_info->type_of_array=FLOAT;}
-            else if(strcmp(assignment, "D") == 0){program_info->type_of_array=DOUBLE;}
-            else if(strcmp(assignment, "LD") == 0){program_info->type_of_array=LONGDOUBLE;}
-            break;
         case 'm':
             program_info->mem_usage_fraction = atof(assignment);
             break;
@@ -153,7 +160,7 @@ int main(int argc, char* argv[])
         }
     }
 
-    size_t size_of_list_element_bytes = arrayTypeToBytes(run_info.type_of_array);
+    size_t size_of_list_element_bytes = arrayTypeToBytes(sizeof(VARIABLE_TYPE));
 
     clock_t cpu_mem_alloc_time_start, cpu_mem_alloc_time_end;
     clock_t cpu_data_set_time_start, cpu_data_set_time_end;
