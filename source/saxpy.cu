@@ -22,8 +22,6 @@
         }                                                                             \
     } while (0)
 
-#define CHECK_NOT_NEG(call) if(call < 0){fprintf(stderr, "*********Error: %llu, File: %s, Line: %d *********n",call, __FILE__, __LINE__);exit(1);}
-
 #define CALC_TIME(start_time, end_time) ((double)((end_time) - (start_time)) / CLOCKS_PER_SEC)
 
 __global__ void SAXPY(long long* d_a, long long* d_b, int k, long long array_length)
@@ -160,8 +158,10 @@ int main(int argc, char* argv[])
     cudaDeviceProp device_properties;
     cudaGetDeviceProperties(&device_properties, 0);
 
-    int global_mem_on_gpu_bytes = device_properties.totalGlobalMem;
-    int size_of_array_to_add = global_mem_on_gpu_bytes * run_info.mem_usage_fraction / size_of_list_element_bytes; 
+    long long global_mem_on_gpu_bytes = device_properties.totalGlobalMem;
+    long long size_of_array_to_add = global_mem_on_gpu_bytes * run_info.mem_usage_fraction / size_of_list_element_bytes;
+
+    printf("%lli", size_of_array_to_add);
 
     int number_of_sms = device_properties.multiProcessorCount;
     int number_of_fpus_per_sm = FPUsPerSM(device_properties);
@@ -181,9 +181,9 @@ int main(int argc, char* argv[])
     long long* a = (long long*)malloc(sizeof(long long) * size_of_array_to_add);
     long long* b = (long long*)malloc(sizeof(long long) * size_of_array_to_add);
     long long* c = (long long*)malloc(sizeof(long long) * size_of_array_to_add);
-    int k = 2;
+    int k = 3;
 
-    if (a == NULL || b == NULL || c == NULL){return -1;}
+    if (a == NULL || b == NULL || c == NULL){printf("NULL POINTER\na : %p\nb : %p\nc : %p", a, b, c);return -1;}
 
     #ifndef OPTIMIZATION_O3
     printf("Assigning Host Memory\n\n");
