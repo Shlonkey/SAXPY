@@ -7,10 +7,12 @@
 #include <stdbool.h>
 
 #include <time.h>
+#include <math.h>
 
 #define MIN(a,b) (((a)<(b))?(a):(b))
 #define MAX(a,b) (((a)>(b))?(a):(b))
 #define CLAMP(a, min, max) MIN((MAX((a), (min))),(max))
+#define MEMORY_ASSIGNMENT_FEEDBACK_FRACTION 0.1
 
 #define CUDA_CHECK(call)                                                              \
     do {                                                                              \
@@ -44,7 +46,7 @@
 #endif
 
 
-__global__ void SAXPY(ARRAY_VARIABLE_TYPE* d_a, ARRAY_VARIABLE_TYPE* d_b, float k, ARRAY_VARIABLE_TYPE array_length)
+__global__ void SAXPY(ARRAY_VARIABLE_TYPE* d_a, ARRAY_VARIABLE_TYPE* d_b, float k, unsigned long long array_length)
 {
     unsigned long long start_index = blockIdx.x * blockDim.x + threadIdx.x;
     unsigned long long stride = gridDim.x * blockDim.x;
@@ -81,17 +83,6 @@ int FPUsPerSM(cudaDeviceProp device_properties)
     return NULL;
 }
 
-enum arraytype
-{
-    SHORT,
-    INT,
-    LONG,
-    LONGLONG,
-    FLOAT,
-    DOUBLE,
-    LONGDOUBLE
-};
-
 struct program_run_infomation
 {
     double mem_usage_fraction;
@@ -111,31 +102,30 @@ void process_input_flag(char flag, char* assignment, struct program_run_infomati
     {
         case 'm':
             program_info->mem_usage_fraction = atof(assignment);
-            break;
+            return;
         case 'p':
             program_info->profile = MAX(atoi(assignment), 0);
-            break;
+            return;
         case 's':
             program_info->oversubscription = MAX(atoi(assignment), 0);
-            break;
+            return;
     }
+    printf("flag '%s' is not a valid flag. try running with the -h flag for a list of VALID flags.",assignment);exit(1);
 }
 
 //argv can contain the following;
-//  arraytype -a : {S, I, L, LL, F, D, LD}
 //  memuseagefration -m : 0.0 - 1.0
 //  profile -p : (0-UNINTMAX) --- should run through p times and calclate sd dev mean and such
 //  oversubscription -s: (0-INTMAX)
 int main(int argc, char* argv[])
 {
-
     struct program_run_infomation run_info = default_program_run_information();
 
     for(int i = 1; i < argc; i++)
     {
         if(argv[i][0] == '-'){
             if(argv[i][1] != 'h'){process_input_flag(argv[i][1], argv[i+1], &run_info);i++;}
-            else {printf("\nValid Flags:\n\t-a : arraytype {S, I, L, LL, F, D, LD}\n\t-m : memusagefraction {0.0-1.0}\n\t-p : profile {0, 1, 2, ...}\n\t-s : oversubscription {0, 1, 2, ...}\n\n");return 0;}
+            else {printf("\nValid Flags:\n\t-a : arraytype {S, I, L, LL, F, D, LD}\n\t-m : memusagefraction {0.0-1.0}\n\t-p : profile {0, 1, 2, ...}\n\t-s : oversubscription {0, 1, 2, ...}\n\n");exit(1);}
         }
     }
 
@@ -156,9 +146,7 @@ int main(int argc, char* argv[])
     cudaGetDeviceProperties(&device_properties, 0);
 
     long long global_mem_on_gpu_bytes = device_properties.totalGlobalMem;
-    long long size_of_array_to_add = global_mem_on_gpu_bytes * run_info.mem_usage_fraction / size_of_list_element_bytes;
-
-    printf("%lli", size_of_array_to_add);
+    unsigned long long size_of_array_to_add = global_mem_on_gpu_bytes * run_info.mem_usage_fraction / size_of_list_element_bytes;
 
     int number_of_sms = device_properties.multiProcessorCount;
     int number_of_fpus_per_sm = FPUsPerSM(device_properties);
@@ -169,6 +157,8 @@ int main(int argc, char* argv[])
 
     int number_of_threads_requested = (1 + run_info.oversubscription) * number_of_fpus_per_sm;
     int number_of_threads_per_block = MIN(max_threads_per_block, number_of_threads_requested);
+
+    unsigned long long MEMORY_FEEDBACK_INDEX_SPLIT = floor(size_of_array_to_add * MEMORY_ASSIGNMENT_FEEDBACK_FRACTION);
 
     #ifndef OPTIMIZATION_O3
     printf("Allocating Host Memory\n");
@@ -191,8 +181,9 @@ int main(int argc, char* argv[])
     if(run_info.profile > 0){cpu_data_set_time_start = clock();}
     for (unsigned long long i = 0; i < size_of_array_to_add; i++)
     {
+
         #ifndef OPTIMIZATION_O3
-        if (i % 50000000 == 0)
+        if (i % MEMORY_FEEDBACK_INDEX_SPLIT == 0)
         {
             printf("%lf %% complete\n", 100 * i / (double)size_of_array_to_add);
         }
@@ -261,21 +252,23 @@ int main(int argc, char* argv[])
     CUDA_CHECK(cudaFree(d_b));
     CUDA_CHECK(cudaDeviceReset());
     if(run_info.profile > 0){device_mem_free_time_end = clock();}
+    
     //VALIDATE RESULT
-    // if(run_info.profile > 0){data_validation_time_start = clock();}
-    // #ifndef OPTIMIZATION_O3
-    // printf("VALIDATING RESULT\n");
-    // #endif
-    // for (unsigned long long i = 0; i < size_of_array_to_add; i++)
-    // {
-    //     if (c[i] != (long long)(k + 1) * i)
-    //     {
-    //         printf("%lli != %lli\n", c[i], (long long)(k + 1) * i);
-    //         printf("RESULT INVALID\n\n");
-    //         return -1;
-    //     }
-    // }
-    // if(run_info.profile > 0){data_validation_time_end = clock();}
+    if(run_info.profile > 0){data_validation_time_start = clock();}
+    #ifndef OPTIMIZATION_O3
+    printf("VALIDATING RESULT\n");
+    #endif
+    for (unsigned long long i = 0; i < size_of_array_to_add; i++)
+    {
+        if (c[i] != (ARRAY_VARIABLE_TYPE)((k + 1) * i))
+        {
+            //can't do this since format strings suck. if needed, make a function to return a format string given a var type
+            printf("%i != %i\n", c[i], (ARRAY_VARIABLE_TYPE)((k + 1) * i));
+            printf("RESULT INVALID\n\n");
+            return -1;
+        }
+    }
+    if(run_info.profile > 0){data_validation_time_end = clock();}
     //END VALIDATE RESULT
 
     #ifndef OPTIMIZATION_O3
@@ -297,6 +290,7 @@ int main(int argc, char* argv[])
         
         printf("Number of Active Threads per SM : %i\nNumber of Active and Inactive Threads per SM : %i\nPercentage of FPUs used : %lf%%\nPercentage of Inactive Threads Used : %lf%%\nActive to Inactive Thread Ratio : (%i:%i)\n", number_of_active_threads_per_sm, number_of_threads_per_block, percentage_of_fpus_used, percentage_of_inactive_threads_used, number_of_active_threads_per_sm, (number_of_threads_per_block - number_of_active_threads_per_sm));
         printf("\n----------TIMINGS----------\n\n");
+        printf("");
     }
     return 0;
 }
