@@ -22,7 +22,25 @@
         }                                                                             \
     } while (0)
 
+#define CHECK_NOT_NEG(call) if(call < 0){fprintf(stderr, "*********Error: %llu, File: %s, Line: %d *********n",call, __FILE__, __LINE__);exit(1);}
 #define CALC_TIME(start_time, end_time) ((double)((end_time) - (start_time)) / CLOCKS_PER_SEC)
+
+#ifdef SHORT
+    #define VARIABLE_TYPE short
+#elif INT
+    #define VARIABLE_TYPE int
+#elif LONG
+    #define VARIABLE_TYPE long
+#elif LONGLONG
+    #define VARIABLE_TYPE long long
+#elif FLOAT
+    #define VARIABLE_TYPE float
+#elif DOUBLE
+    #define VARIABLE_TYPE double
+#elif LONGDOUBLE
+    #define VARIABLE_TYPE long double
+#endif
+
 
 __global__ void SAXPY(long long* d_a, long long* d_b, int k, long long array_length)
 {
@@ -74,7 +92,6 @@ enum arraytype
 
 struct program_run_infomation
 {
-    enum arraytype type_of_array;
     double mem_usage_fraction;
     unsigned int profile;
     unsigned int oversubscription;
@@ -82,7 +99,7 @@ struct program_run_infomation
 
 struct program_run_infomation default_program_run_information()
 {
-    struct program_run_infomation default_run_info = {INT, 0.9, 0, 0};
+    struct program_run_infomation default_run_info = {0.9, 0, 0};
     return default_run_info;
 }
 
@@ -90,15 +107,6 @@ void process_input_flag(char flag, char* assignment, struct program_run_infomati
 {
     switch(flag)
     {
-        case 'a':
-            if(strcmp(assignment, "S") == 0){program_info->type_of_array=SHORT;}
-            else if(strcmp(assignment, "I") == 0){program_info->type_of_array=INT;}
-            else if(strcmp(assignment, "L") == 0){program_info->type_of_array=LONG;}
-            else if(strcmp(assignment, "LL") == 0){program_info->type_of_array=LONGLONG;}
-            else if(strcmp(assignment, "F") == 0){program_info->type_of_array=FLOAT;}
-            else if(strcmp(assignment, "D") == 0){program_info->type_of_array=DOUBLE;}
-            else if(strcmp(assignment, "LD") == 0){program_info->type_of_array=LONGDOUBLE;}
-            break;
         case 'm':
             program_info->mem_usage_fraction = atof(assignment);
             break;
@@ -109,7 +117,6 @@ void process_input_flag(char flag, char* assignment, struct program_run_infomati
             program_info->oversubscription = MAX(atoi(assignment), 0);
             break;
     }
-
 }
 
 size_t arrayTypeToBytes(enum arraytype type)
@@ -148,12 +155,23 @@ int main(int argc, char* argv[])
     for(int i = 1; i < argc; i++)
     {
         if(argv[i][0] == '-'){
-            process_input_flag(argv[i][1], argv[i+1], &run_info);
-            i++;
+            if(argv[i][1] != 'h'){process_input_flag(argv[i][1], argv[i+1], &run_info);i++;}
+            else {printf("\nValid Flags:\n\t-a : arraytype {S, I, L, LL, F, D, LD}\n\t-m : memusagefraction {0.0-1.0}\n\t-p : profile {0, 1, 2, ...}\n\t-s : oversubscription {0, 1, 2, ...}\n\n");return 0;}
         }
     }
 
-    size_t size_of_list_element_bytes = arrayTypeToBytes(run_info.type_of_array); 
+    size_t size_of_list_element_bytes = arrayTypeToBytes(sizeof(VARIABLE_TYPE));
+
+    clock_t cpu_mem_alloc_time_start, cpu_mem_alloc_time_end;
+    clock_t cpu_data_set_time_start, cpu_data_set_time_end;
+    clock_t gpu_mem_alloc_time_start, gpu_mem_alloc_time_end;
+    clock_t host_to_device_mem_copy_time_start, host_to_device_mem_copy_time_end;
+    clock_t kernel_run_time_start, kernel_run_time_end;
+    clock_t device_to_host_mem_copy_time_start, device_to_host_mem_copy_time_end;
+    clock_t device_mem_free_time_start, device_mem_free_time_end;
+    clock_t data_validation_time_start, data_validation_time_end;
+    clock_t host_mem_free_time_start, host_mem_free_time_end;
+
 
     cudaDeviceProp device_properties;
     cudaGetDeviceProperties(&device_properties, 0);
@@ -178,44 +196,32 @@ int main(int argc, char* argv[])
     #endif
 
     //Asign variable
+    if(run_info.profile > 0){cpu_mem_alloc_time_start = clock();}
     long long* a = (long long*)malloc(sizeof(long long) * size_of_array_to_add);
     long long* b = (long long*)malloc(sizeof(long long) * size_of_array_to_add);
     long long* c = (long long*)malloc(sizeof(long long) * size_of_array_to_add);
-    int k = 3;
+    int k = 2;
 
     if (a == NULL || b == NULL || c == NULL){printf("NULL POINTER\na : %p\nb : %p\nc : %p", a, b, c);return -1;}
 
     #ifndef OPTIMIZATION_O3
     printf("Assigning Host Memory\n\n");
     #endif
-    if(run_info.type_of_array >= 0 && run_info.type_of_array <= 3)//integer type
+
+    //set host data
+    if(run_info.profile > 0){cpu_data_set_time_start = clock();}
+    for (unsigned long long i = 0; i < size_of_array_to_add; i++)
     {
-        for (unsigned long long i = 0; i < size_of_array_to_add; i++)
+        #ifndef OPTIMIZATION_O3
+        if (i % 50000000 == 0)
         {
-            #ifndef OPTIMIZATION_O3
-            if (i % 50000000 == 0)
-            {
-                printf("%lf %% complete\n", 100 * i / (double)size_of_array_to_add);
-            }
-            #endif
-            a[i] = i;
-            b[i] = i;
+            printf("%lf %% complete\n", 100 * i / (double)size_of_array_to_add);
         }
+        #endif
+        a[i] = i;
+        b[i] = i;
     }
-    else if (run_info.type_of_array >= 4 && run_info.type_of_array <= 6)//float type
-    {
-        for (unsigned long long i = 0; i < size_of_array_to_add; i++)
-        {
-            #ifndef OPTIMIZATION_O3
-            if (i % 50000000 == 0)
-            {
-                printf("%lf %% complete\n", 100 * i / (double)size_of_array_to_add);
-            }
-            #endif
-            a[i] = i / 2.0;
-            b[i] = i / 2.0;
-        }
-    }
+    if(run_info.profile > 0){cpu_data_set_time_end = clock();}
 
     #ifndef OPTIMIZATION_O3
     printf("\nArray Size : %1.4lf * 10^9\nBlocks : %i\nThreads Per Block : %i\n\n",size_of_array_to_add / (double)1000000000, number_of_blocks, number_of_threads_per_block);
@@ -230,26 +236,32 @@ int main(int argc, char* argv[])
     #endif
 
     //allocate device memory
+    if(run_info.profile > 0){gpu_mem_alloc_time_start = clock();}
     CUDA_CHECK(cudaMalloc(&d_a, sizeof(long long) * size_of_array_to_add));
     CUDA_CHECK(cudaMalloc(&d_b, sizeof(long long) * size_of_array_to_add));
+    if(run_info.profile > 0){gpu_mem_alloc_time_end = clock();}
 
     #ifndef OPTIMIZATION_O3
     printf("copying %lf GB from Host to Device\n", sizeof(long long) * 2 * size_of_array_to_add / double(1024 * 1024 * 1024));
     #endif
 
     //cpy hist data to device
+    if(run_info.profile > 0){host_to_device_mem_copy_time_start = clock();}
     CUDA_CHECK(cudaMemcpy(d_a, a, sizeof(long long) * size_of_array_to_add, cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(d_b, b, sizeof(long long) * size_of_array_to_add, cudaMemcpyHostToDevice));
+    if(run_info.profile > 0){host_to_device_mem_copy_time_end = clock();}
 
     #ifndef OPTIMIZATION_O3
     printf("Launching Kernel\n");
     #endif
     
     //launch kernel
+    if(run_info.profile > 0){kernel_run_time_start = clock();}
     SAXPY<<<number_of_blocks, number_of_threads_per_block >>>(d_a, d_b, k, size_of_array_to_add);
 
     //not strictly needed as 'cudamemcpy' runs on the default stream as does 'Kernel' and hence it waits by default however if another stream was used, it would be mandatory
     CUDA_CHECK(cudaDeviceSynchronize());
+    if(run_info.profile > 0){kernel_run_time_end = clock();}
     
     #ifndef OPTIMIZATION_O3
     printf("Kernel Complete\n\n");
@@ -257,60 +269,53 @@ int main(int argc, char* argv[])
     #endif
 
     //read back data
+    if(run_info.profile > 0){device_to_host_mem_copy_time_start = clock();}
     CUDA_CHECK(cudaMemcpy(c, d_a, sizeof(long long) * size_of_array_to_add, cudaMemcpyDeviceToHost));
+    if(run_info.profile > 0){device_to_host_mem_copy_time_end = clock();}
 
     #ifndef OPTIMIZATION_O3
     printf("Freeing Data from Device\n\n");
     #endif
 
+    if(run_info.profile > 0){device_mem_free_time_start = clock();}
     CUDA_CHECK(cudaFree(d_a));
     CUDA_CHECK(cudaFree(d_b));
     CUDA_CHECK(cudaDeviceReset());
-
+    if(run_info.profile > 0){device_mem_free_time_end = clock();}
+    if(run_info.profile > 0){data_validation_time_start = clock();}
     #ifndef OPTIMIZATION_O3
     printf("VALIDATING RESULT\n");
-    if(run_info.type_of_array >= 0 && run_info.type_of_array <= 3)//integer type
+    #endif
+    for (long long i = 0; i < size_of_array_to_add; i++)
     {
-        for (long long i = 0; i < size_of_array_to_add; i++)
+        if (c[i] != (long long)(k + 1) * i)
         {
-            if (c[i] != (long long)(k + 1) * i)
-            {
-                printf("%lli != %lli\n", c[i], (long long)(k + 1) * i);
-                printf("RESULT INVALID\n\n");
-                return -1;
-            }
+            printf("%lli != %lli\n", c[i], (long long)(k + 1) * i);
+            printf("RESULT INVALID\n\n");
+            return -1;
         }
     }
-    else if (run_info.type_of_array >= 4 && run_info.type_of_array <= 6)//float type
-    {
-        for (long long i = 0; i < size_of_array_to_add; i++)
-        {
-            if (c[i] != (long long)(k + 1) * i)
-            {
-                printf("%lli != %lli\n", c[i], (long long)(k + 1) * i / 2);
-                printf("RESULT INVALID\n\n");
-                return -1;
-            }
-        }
-    }
+    if(run_info.profile > 0){data_validation_time_end = clock();} 
 
+    #ifndef OPTIMIZATION_O3
     printf("RESULT VALID\n\n");
     printf("Freeing Data from Host\n\n");
     #endif
 
+    if(run_info.profile > 0){host_mem_free_time_start = clock();} 
     free(a);
     free(b);
     free(c);
+    if(run_info.profile > 0){host_mem_free_time_end = clock();} 
 
     if(run_info.profile > 0)
     {
-        //print run metrics
-        printf("");
         int number_of_active_threads_per_sm = MIN(number_of_fpus_per_sm, number_of_threads_requested);
         double percentage_of_fpus_used = 100 * number_of_active_threads_per_sm / (double)number_of_fpus_per_sm;
         double percentage_of_inactive_threads_used = 100 * (number_of_threads_per_block - number_of_active_threads_per_sm) / (double)(max_threads_per_block - number_of_active_threads_per_sm);
         
-        printf("Number of Active Threads per SM : %i\nNumber of Active and Inactive Threads per SM : %i\nPercentage of FPUs used : %lf%%\nPercentage of Inactive Threads Used : %lf%%\nActive to Inactive Thread Ratio : (%i:%i)\n--------------------------------------------------------------------------------\n", number_of_active_threads_per_sm, number_of_threads_per_block, percentage_of_fpus_used, percentage_of_inactive_threads_used, number_of_active_threads_per_sm, (number_of_threads_per_block - number_of_active_threads_per_sm));
+        printf("Number of Active Threads per SM : %i\nNumber of Active and Inactive Threads per SM : %i\nPercentage of FPUs used : %lf%%\nPercentage of Inactive Threads Used : %lf%%\nActive to Inactive Thread Ratio : (%i:%i)\n", number_of_active_threads_per_sm, number_of_threads_per_block, percentage_of_fpus_used, percentage_of_inactive_threads_used, number_of_active_threads_per_sm, (number_of_threads_per_block - number_of_active_threads_per_sm));
+        printf("\n----------TIMINGS----------\n\n");
     }
     return 0;
 }
