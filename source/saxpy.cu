@@ -13,6 +13,7 @@
 #define MAX(a,b) (((a)>(b))?(a):(b))
 #define CLAMP(a, min, max) MIN((MAX((a), (min))),(max))
 #define MEMORY_ASSIGNMENT_FEEDBACK_FRACTION 0.1
+#define K 1.789127382193789
 
 #define CUDA_CHECK(call)                                                              \
     do {                                                                              \
@@ -46,7 +47,7 @@
 #endif
 
 
-__global__ void SAXPY(ARRAY_VARIABLE_TYPE* d_a, ARRAY_VARIABLE_TYPE* d_b, float k, unsigned long long array_length)
+__global__ void SAXPY(ARRAY_VARIABLE_TYPE* d_a, ARRAY_VARIABLE_TYPE* d_b, long double k, unsigned long long array_length)
 {
     unsigned long long start_index = blockIdx.x * blockDim.x + threadIdx.x;
     unsigned long long stride = gridDim.x * blockDim.x;
@@ -169,7 +170,7 @@ int main(int argc, char* argv[])
     ARRAY_VARIABLE_TYPE* a = (ARRAY_VARIABLE_TYPE*)malloc(size_of_list_element_bytes * size_of_array_to_add);
     ARRAY_VARIABLE_TYPE* b = (ARRAY_VARIABLE_TYPE*)malloc(size_of_list_element_bytes * size_of_array_to_add);
     ARRAY_VARIABLE_TYPE* c = (ARRAY_VARIABLE_TYPE*)malloc(size_of_list_element_bytes * size_of_array_to_add);
-    int k = 2;
+    if(run_info.profile > 0){cpu_mem_alloc_time_end = clock();}
 
     if (a == NULL || b == NULL || c == NULL){printf("NULL POINTER\na : %p\nb : %p\nc : %p", a, b, c);return -1;}
 
@@ -227,7 +228,7 @@ int main(int argc, char* argv[])
     
     //launch kernel
     if(run_info.profile > 0){kernel_run_time_start = clock();}
-    SAXPY<<<number_of_blocks, number_of_threads_per_block >>>(d_a, d_b, k, size_of_array_to_add);
+    SAXPY<<<number_of_blocks, number_of_threads_per_block >>>(d_a, d_b, K, size_of_array_to_add);
 
     //not strictly needed as 'cudamemcpy' runs on the default stream as does 'Kernel' and hence it waits by default however if another stream was used, it would be mandatory
     CUDA_CHECK(cudaDeviceSynchronize());
@@ -260,15 +261,17 @@ int main(int argc, char* argv[])
     #endif
     for (long long i = 0; i < size_of_array_to_add; i++)
     {
-        if (c[i] != (ARRAY_VARIABLE_TYPE)((k + 1) * i))
+        if (c[i] != (ARRAY_VARIABLE_TYPE)((K + 1) * i))
         {
-            //can't do this since format strings suck. if needed, make a function to return a format string given a var type
-            // printf("%i != %i\n", c[i], (ARRAY_VARIABLE_TYPE)((k + 1) * i));
-            // printf("RESULT INVALID\n\n");
-            // return -1;
-            if(c[i] == (ARRAY_VARIABLE_TYPE)((k + 1) * i) -5)
+            if(c[i] == (ARRAY_VARIABLE_TYPE)((K + 1) * i) -1)
             {
-                printf("%i != %i\n", c[i], (ARRAY_VARIABLE_TYPE)((k + 1) * i));
+                #if(defined(SHORT) || defined(INT) || defined(LONG) || defined(LONGLONG))
+                printf("%llu != %llu\n", c[i], (ARRAY_VARIABLE_TYPE)((K + 1) * i));
+                #endif
+                #if(defined(FLOAT) || defined(DOUBLE) || defined(LONGDOUBLE))
+                printf("%lf != %lf\n", c[i], (ARRAY_VARIABLE_TYPE)((K + 1) * i));
+                #endif
+                printf("INFO : If your result is off by 1, and you have compiled for integral type, consider checking K is also integral i.e. 3 not 3.1");
                 return;
             }
         }
@@ -295,7 +298,28 @@ int main(int argc, char* argv[])
         
         printf("Number of Active Threads per SM : %i\nNumber of Active and Inactive Threads per SM : %i\nPercentage of FPUs used : %lf%%\nPercentage of Inactive Threads Used : %lf%%\nActive to Inactive Thread Ratio : (%i:%i)\n", number_of_active_threads_per_sm, number_of_threads_per_block, percentage_of_fpus_used, percentage_of_inactive_threads_used, number_of_active_threads_per_sm, (number_of_threads_per_block - number_of_active_threads_per_sm));
         printf("\n----------TIMINGS----------\n\n");
-        printf("");
+        
+        long double CMA = CALC_TIME(cpu_mem_alloc_time_start, cpu_mem_alloc_time_end);
+        long double CDS = CALC_TIME(cpu_data_set_time_start, cpu_data_set_time_end);
+        long double GMA = CALC_TIME(gpu_mem_alloc_time_start, gpu_mem_alloc_time_end);
+        long double H2DMC = CALC_TIME(host_to_device_mem_copy_time_start, host_to_device_mem_copy_time_end);
+        long double KR = CALC_TIME(kernel_run_time_start, kernel_run_time_end);
+        long double D2HMC = CALC_TIME(device_to_host_mem_copy_time_start, device_to_host_mem_copy_time_end);
+        long double DMF = CALC_TIME(device_mem_free_time_start, device_mem_free_time_end);
+        long double DV = CALC_TIME(data_validation_time_start, data_validation_time_end);
+        long double HMF = CALC_TIME(host_mem_free_time_start, host_mem_free_time_end);
+        
+        printf( "CPU Mem Alloc          : %lf\n"
+                "CPU Data Set           : %lf\n"
+                "GPU Mem Alloc          : %lf\n"
+                "Host -> Device Mem Cpy : %lf\n"
+                "Kernel Run             : %lf\n"
+                "Device -> Host Mem Cpy : %lf\n"
+                "Device Memory Free     : %lf\n"
+                "Data Validation        : %lf\n"
+                "Host Memory Free       : %lf\n",CMA, CDS, GMA, H2DMC, KR, D2HMC, DMF, DV, HMF);
+
+        printf("\n\n----------TIMINGS----------\n");
     }
     return 0;
 }
