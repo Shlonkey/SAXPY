@@ -2,3 +2,4 @@
 *.exp
 *.lib
 *vc140.pdb
+*testpy.cu

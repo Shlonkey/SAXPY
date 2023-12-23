@@ -258,7 +258,7 @@ int main(int argc, char* argv[])
     #ifndef OPTIMIZATION_O3
     printf("VALIDATING RESULT\n");
     #endif
-    for (unsigned long long i = 0; i < size_of_array_to_add; i++)
+    for (long long i = 0; i < size_of_array_to_add; i++)
     {
         if (c[i] != (ARRAY_VARIABLE_TYPE)((k + 1) * i))
         {
@@ -266,7 +266,7 @@ int main(int argc, char* argv[])
             // printf("%i != %i\n", c[i], (ARRAY_VARIABLE_TYPE)((k + 1) * i));
             // printf("RESULT INVALID\n\n");
             // return -1;
-            if(c[i] == (ARRAY_VARIABLE_TYPE)((k + 1) * i) -2)
+            if(c[i] == (ARRAY_VARIABLE_TYPE)((k + 1) * i) -5)
             {
                 printf("%i != %i\n", c[i], (ARRAY_VARIABLE_TYPE)((k + 1) * i));
                 return;
